@@ -1,0 +1,46 @@
+name: Build public LÖVE engine for iPhone
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/ios-engine.yml'
+permissions:
+  contents: write
+jobs:
+  engine:
+    if: github.event.repository.private == false
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Fetch and verify official LÖVE 11.5 iOS source and libraries
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 2 https://github.com/love2d/love/releases/download/11.5/love-11.5-ios-source.zip -o official.zip
+          echo '8a72a3239a4ae7092aa5087c86e5cb2dfc6ce808b1c189e2d4ea1b91db6cb035  official.zip' | shasum -a 256 -c -
+          ditto -x -k official.zip .
+      - name: Compile device engine only (no checkout, game data or signing secrets)
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          xcodebuild -project love-11.5-ios-source/platform/xcode/love.xcodeproj -target love-ios -configuration Release -sdk iphoneos ARCHS=arm64 IPHONEOS_DEPLOYMENT_TARGET=15.0 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO SYMROOT="$RUNNER_TEMP/products" OBJROOT="$RUNNER_TEMP/objects" CONFIGURATION_BUILD_DIR="$RUNNER_TEMP/products/engine" build
+          shopt -s nullglob
+          apps=("$RUNNER_TEMP/products/engine/"*.app)
+          test "${#apps[@]}" -eq 1
+          app="${apps[0]}"
+          exe="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")"
+          xcrun lipo -verify_arch arm64 "$app/$exe"
+          xcrun vtool -show-build "$app/$exe" | grep -E 'platform +IOS$'
+          test -z "$(find "$app" -name '*.love' -print)"
+          mkdir Payload
+          cp -R "$app" Payload/Engine.app
+          cp love-11.5-ios-source/license.txt Payload/Engine.app/LICENSE-love.txt
+          /usr/bin/zip -qry engine-ios-arm64.zip Payload
+          shasum -a 256 engine-ios-arm64.zip > engine.sha256
+      - name: Return vanilla engine as a draft release (no Actions artifact/cache storage)
+        working-directory: ${{ runner.temp }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "engine-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --draft --target "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" --title "Unsigned upstream LÖVE 11.5 (arm64 iOS)" --notes "Open-source engine only. No game or user data." engine-ios-arm64.zip engine.sha256
