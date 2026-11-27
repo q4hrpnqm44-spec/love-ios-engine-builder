@@ -29,7 +29,7 @@ jobs:
           test "${#apps[@]}" -eq 1
           app="${apps[0]}"
           exe="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")"
-          xcrun lipo -verify_arch arm64 "$app/$exe"
+          xcrun lipo "$app/$exe" -verify_arch arm64
           xcrun vtool -show-build "$app/$exe" | grep -E 'platform +IOS$'
           test -z "$(find "$app" -name '*.love' -print)"
           mkdir Payload
